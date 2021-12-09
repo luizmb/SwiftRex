@@ -127,13 +127,31 @@ public final class EffectMiddleware<InputActionType, OutputActionType, StateType
 
     func runOptionalEffect(_ effect: Effect<Dependencies, OutputActionType>, output: AnyActionHandler<OutputActionType>) {
         guard effect.doesSomething else { return }
-
-        let toCancel: (AnyHashable) -> FireAndForget<DispatchedAction<OutputActionType>> = { [weak self] cancellingToken in
-            .init { [weak self] in
-                DispatchQueue.main.async {
-                    self?.cancellables.removeValue(forKey: cancellingToken.hashValue)
-                }
+        
+        let cancelTokenPublisher: (AnyHashable) -> Void = { [weak self] cancellingToken in 
+            guard let self = self else {
+                #if SWIFTREX_DEBUG
+                print("⚠️ Can't cancel Effect with token \(cancellingToken.hashValue) because Middleware was disposed.")
+                #endif
+                return
             }
+            let removed = self.cancellables.removeValue(forKey: cancellingToken.hashValue) != nil
+            
+            #if SWIFTREX_DEBUG
+            if removed {
+                print("Cancelled Effect with token \(cancellingToken.hashValue).")
+            } else {
+                print("⚠️ Can't cancel Effect with token \(cancellingToken.hashValue) because it was not found in the dictionary with keys \(self.cancellables.keys.joined(separator: ", ")).")
+            }
+            #endif
+        }
+
+        let toCancel: (AnyHashable) -> FireAndForget<DispatchedAction<OutputActionType>> = { cancellingToken in
+            FireAndForget(
+                Empty<IgnoringOutput, Never>()
+                    .receive(on: DispatchQueue.main)
+                    .handleEvents(receiveSubscription: { _ in cancelTokenPublisher(cancellingToken) })
+            )
         }
 
         guard let publisher = effect.run((dependencies: self.dependencies, toCancel: toCancel)) else { return }
@@ -141,16 +159,8 @@ public final class EffectMiddleware<InputActionType, OutputActionType, StateType
         if let token = effect.token {
             let subscription = publisher
                 .handleEvents(
-                    receiveCompletion: { [weak self] _ in
-                        DispatchQueue.main.async {
-                            self?.cancellables.removeValue(forKey: token.hashValue)
-                        }
-                    },
-                    receiveCancel: { [weak self] in
-                        DispatchQueue.main.async {
-                            self?.cancellables.removeValue(forKey: token.hashValue)
-                        }
-                    }
+                    receiveCompletion: { _ in cancelTokenPublisher(token.hashValue) },
+                    receiveCancel: { cancelTokenPublisher(token.hashValue) }
                 )
                 .sink { output.dispatch($0.action, from: $0.dispatcher) }
             self.cancellables[token.hashValue] = subscription
