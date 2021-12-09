@@ -18,7 +18,7 @@ public struct FireAndForget<IgnoringOutput>: Publisher {
     /// Init a FireAndForget publisher by providing a closure with the operation to execute and ignore the output.
     /// - Parameter operation: any operation you want to run async and ignore the result
     public init(_ operation: @escaping () -> Void) {
-        self.init(Empty<IgnoringOutput, Never>().handleEvents(receiveSubscription: { _ in operation() }))
+            self.init(Empty<IgnoringOutput, Never>().handleEvents(receiveSubscription: { _ in operation() }))
     }
 
     /// Init a FireAndForget publisher by providing an upstream that never fails so we can simply ignore its output
